@@ -14,12 +14,15 @@ use MooseX::App::Simple;
 use 5.20.0;
 use experimental  'signatures', 'postderef';
 
+parameter 'repo_dir',
+    is => 'ro';
+
 use MooseX::MungeHas {
     'has_ro' => [ 'is_ro' ],
 };
 
 has_ro git => sub {
-    Git::Wrapper->new('.');
+    Git::Wrapper->new($_[0]->repo_dir);
 };
 
 has_ro files => sub { +{} };
@@ -79,11 +82,13 @@ sub process_version($self,$version) {
     my( $date ) = [ $self->git->RUN( 'log', $commit,  {1 => 1, pretty => '%aI'} ) ]->[0];
     $date =~ s/T.*//;
 
-    $self->populate_version($commit);
+    my $data = $self->populate_version($commit);
 
     return {
         version      => $version,
         date         => $date,
+        %$data,
+
         contributors => $self->aggregate_contributors,
     };
 
@@ -103,21 +108,44 @@ after populate_version => sub($self,$commit){
 };
 
 sub aggregate_contributors($self) {
-    +{ pairmap {
-        $a => sum map { @$_ } @$b
-    } partition_by { shift @$_ } map { pairs %$_ } values $self->files->%* };
+    +[ pairmap {
+            +{ id => $a, 
+                lines => sum map { @$_ } @$b
+            }
+    } partition_by { shift @$_ } map { pairs %$_ } values $self->files->%* ];
+}
+
+sub churn ($self,$commit,$previous = '4b825dc642cb6eb9a060e54bf8d69288fbee4904' ) {
+    $previous ||= '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
+    my %churn = ( added => 0, removed => 0 );
+    for ( $self->git->diff( $previous, $commit ) ) {
+        next unless /^([+-])(?!=-)/;
+        $churn{ $1 eq '+' ? 'added' : 'removed' }++;
+    }
+
+    return \%churn;
 }
 
 sub populate_version($self,$commit) {
     my @files = $self->git->ls_tree( $commit => { r => 1, 'name-only' => 1 } );
 
-    warn "total # of files: ", scalar @files, "\n";
+    my $total = @files;
 
     @files = grep { !$self->files->{$_} } @files;
 
-    warn "total # of modified files: ", scalar @files, "\n";
-
     $self->populate_file( $commit, $_ ) for @files;
+
+    my $churn = $self->churn(
+        $commit,
+        $self->previous_version_commit 
+    );
+
+    return {
+		files => { total => $total, modified => scalar @files },
+        churn          => $churn,
+    };
+
+
 }
 
 sub populate_file($self,$commit,$file) {

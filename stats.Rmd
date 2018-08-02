@@ -1,0 +1,44 @@
+---
+title: Dancer2 stats
+output: html_document
+---
+
+```{r,echo=FALSE,include=FALSE}
+library('tidyverse')
+
+library('jsonlite')
+
+data <- fromJSON( 'stats.json' )
+
+data$date <- as.Date(data$date)
+```
+
+## Number of files
+
+```{r,echo=FALSE}
+file_stats <- data %>% select( date ) %>% cbind( unnest(data$files ) ) %>%
+	gather( key="key", value="value", -date )
+
+ggplot(data=file_stats, mapping = aes( x = date, y =value )) + geom_point() + facet_grid( ~key )
+```
+
+## Contributors
+
+```{r,echo=FALSE}
+contrib <- unnest( data %>% select( date, contributors ) )
+
+ggplot(data=contrib, mapping = aes( x = date, y =lines, color=id ) ) + geom_point() + theme(legend.position="none")
+```
+
+```{r,echo=FALSE}
+
+contrib <- unnest( data %>% select( date, version, contributors ) %>% filter( date==max(date) ) ) %>%
+    arrange( desc(lines) ) %>% select( id, lines )
+
+contrib$id <- sub(  '@.*', '', contrib$id )
+
+knitr::kable( contrib, caption = "lines of code in latest version"  )
+
+
+```
+
